@@ -1,0 +1,1008 @@
+---
+title: 'IA650 Project 2: Electric Load Forecasting'
+author: "Joel Diagostino | Mohammed Hossain | Tyler Williams"
+date: "created 11/20/2018 | completed 12/10/2018"
+output:
+  html_document:
+    highlight: tango
+    theme: cerulean
+    toc: yes
+    toc_depth: 1
+  pdf_document:
+    toc: yes
+    toc_depth: '1'
+---
+
+# Project Introduction
+
+#### Project Description
+
+_Project 2_ in _IA650_ involves analyzing electric load across the state of New York. New York Independent System Operators (NYISO) manage the flow of reliable electricity across New York. NYISO is responsible for cost-effectively matching offers from energy producers with consumer utility demand to supply electric power for the state. NYISO also oversees the delivery of power from generators to the utility companies.\  
+* [Learn more](https://www.nyiso.com/what-we-do)\  
+
+Electric load is forecasted and monitored hourly, across eleven NYISO zone areas. The forecasted load values are highly utilized in NYISO's day to day operation. Such as, balancing power, demand response etc.\  
+* [NYISO Zonal Map](http://nyarea.org/wp-content/uploads/NY-Electricity-Marketplace-IB.png)\  
+
+The results provided in this report will be reproduceable to an analyst evaluating or furthering the report findings. Each assumption made and step taken in this report will be carefully described. When applicable, relative web links for additional readings and supporting points will be provided. All datasets, code, and logic will be provided and thoroughly explained. All answers provided will follow the [CRISP-DM](https://en.wikipedia.org/wiki/Cross-industry_standard_process_for_data_mining) framework. The final report will be generated using `RStudio` via editing an .RMD file, and output to an .HTML file via knitting.\  
+
+All supporting files will be provided in this project submission, including knitted .html, rmd code, .xlsx files used, etc.\  
+
+#### Project configuration setttings
+
+The project report will start by performing a few housekeeping items:\  
+* Loading libraries used\  
+* Aligning various configuration settings\  
+
+```{r package_load, message = FALSE, warning = FALSE}
+# Libraries to be used in the project report
+library(broom)
+library(chron)
+library(corrplot)
+library(e1071)
+library(forecast)
+library(fpp2)
+library(ggpubr)
+library(ggthemes)
+library(janitor)
+library(kableExtra)
+library(knitr)
+library(lubridate)
+library(plotly)
+library(psych)
+library(qrsvm)
+library(RColorBrewer)
+library(readxl)
+library(skimr)
+library(stats)
+library(summarytools)
+library(tibbletime)
+library(tidyverse)
+library(vcd)
+```
+
+```{r, include = FALSE}
+# Configuration settings for project report
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+options(scipen = 4)
+theme_set(theme_pubr())
+```
+
+#### User-Defined functions
+
+In this section of the introduction, one user defined function is declared.
+
+* `modeUDF` _supporting link_ | [modeUDF credit](https://stackoverflow.com/questions/2547402/is-there-a-built-in-function-for-finding-the-mode)\  
+    + _Purpose_: to determine mode value of a factor variable\  
+
+```{r}
+# Declare modeUDF
+modeUDF <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]}
+```
+
+***
+
+# Business Understanding
+
+In this section of the project report, a sense of business understanding will be developed and explained with respect to the problem at hand with electric load forecasting. The business understanding framework is an important exercise because it helps to align the analyst with background information and real-world semantics with regard to the data frame(s) being analyzed.  
+
+#### Determine Business Objectives
+
+In the electricity distribution market, pricing decisions for customer energy consumption are influenced by many factors. Some examples of influential factors to pricing decisions are the cost of energy distribution, fuel, and power plant operation. The United States federally allows each state legislature to govern if customer electricity consumption costs are to be regulated, aside from all other costs associated with the process to the business.
+
+The predicted electric load amount is a crucial aspect of the electricity pricing model; it is one of the main factors for pricing decisions. Load forecasting is at the core of nearly all decisions made in energy markets, stemming from the strong influence on the pricing model. The electricity market follows this behavior. Considering that pricing decisions are so important to business health, it would prove helpful to better understand how the current electric load forecasting model is performing, and explore if it can be improved upon. 
+
+Accurate load forecasting can help to better refine many business processes, such as contract evaluation, energy purchasing and generation, load switching, and infrastructure development. Under-estimation by a supplier in an electric load forecast may lead to higher operational costs, due to quick start units cost more for generating power. Over-estimation by a supplier in an electric load forecast may lead to un-economic operation of large generation units, leaving the company with un-used purchased electric energy. It has been discovered that a load forecast error of 1% in terms of Mean Absolute Percentage Error (MAPE) can translate into several hundred thousand dollars for a utility’s financial bottom line. This statistic emphasizes that businesses in the energy market need to have accurate load forecasting.
+
+This report will focus on the electricity loads in the state of New York, which is a state with regulated electricity pricing enforced. Electricity market decisions are made via a collection of independent system operators. Our study focuses on New York Independent System Operator (NYISO) load data available at the data center weblink provided in the data understanding section of this report. NYISOs are currently performing point forecasting methods to analyze load forecast usig Regression and artificial neural network. We will use different approach to do the load forecasting and compare the results with NYISO. 
+
+_supporting link_ | [Factors Affecting Electricity Prices](https://www.eia.gov/energyexplained/index.php?page=electricity_factors_affecting_prices)
+
+#### Assess Situation
+
+##### Identification of Stakeholders
+
+The stakeholders of the process are:\    
+* each Independent System Operator (ISO)\  
+    + This report focuses on NYISO\  
+* Local distribution companies (LDC)\  
+    + eg. National Grid\  
+* Electric generation stations\  
+* Customers of electric distribution companies\  
+
+##### Interests of the Identified Stakeholders
+
+Ensuring a forecast is accurate, as to align on spending and resource management.\  
+* The more accurate the forecast, the less money an ISO will lose in buying too much energy and not being able to use it, or not buying enough energy and having to go back and buy more at a higher price.\  
+* For the LDC's, a more accurate model means they will be able to better predict the price for the customer and better align their business operations, ensuring higher profit.\  
+* Generation stations benefit from a more accurate load prediction model as well, since they will be able to better predict what electric generation stations are required to be running.\  
+* The customers will benefit from a better model as the price paid for electricity will be more consistent, avoiding higher prices with understimation in load forecast.\  
+
+#### Data Mining Goals
+
+The purpose of the data mining methods used in this report are to resimulate the forecasting of electric load values across the NYISO. After running new forecasting models, the report will check performance of the forecasted values against the original forecasts used by NYISO. 
+
+#### Project Plan
+
+As suggested by Hong(2010), this project report will use three years of actual electric load data (Jan 1 2015 to Dec 31 2017) as training data to build a model that calculates the electric load forecast for the next day. Following the model generation, the report will use a rolling forecast on the actual data of a time period to recalculate the model and forecast the next day for the year of 2018 (Jan 1st 2018 to Nov 15th 2018).  
+
+This report will use two forecasting methods to produce possible electric load values.\  
+1. Linear Regression Model\  
+2. ARIMA Model\  
+
+***
+
+# Data Understanding
+
+In this section of the project report, the data understanding topics from the CRISP-DM framework are explored.  
+
+#### Collect Initial Data
+
+Three sets of raw data were collected from the NYISO data load website:\  
+* Actual Electric Load data\  
+    + Under _Actual Load_ section, select _Real-Time_ dropdown\  
+    + Select option to generate a custom report\  
+    + Select all available Zones\  
+    + Select start date of _01/01/2015_, end date of _11/15/2018_\  
+    + Select to download in .CSV format\  
+* Forecast Electric Load data\  
+    + Under _Load Forecast_ section, select _NY Load Forecast_ dropdown\  
+    + Select option to generate a custom report\  
+    + Select all available Zones\  
+    + Select start date of _01/01/2015_, end date of _11/15/2018_\  
+    + Select to download in .CSV format\  
+* Weather data\  
+    + Under _Load Forecast_ section, select _Load Forecast Weather Data_ dropdown\  
+    + Select option to view archive\  
+    + Select _Archived Files (zip format)_ for months of 01-2015 thru 11-2018\  
+    + Unzip each monthly archive and store in all .CSV files in a central folder\  
+
+_data download link_ | [NYISO Data Center](https://www.nyiso.com/load-data)
+
+Each set of raw data downloaded will be initially stored as a collection of .CSV files. There is a process to merge multiple .CSV files into a central .CSV file, using either the command line (Windows/Linux) or the terminal (MacOS). Here is documentation on how to convert the .CSV files using both platforms:\  
+* Windows/Linux | [How to merge multiple .CSV files using Windows/Linux](http://www.tomnash.eu/how-to-combine-multiple-csv-files-into-one-using-cmd/)\  
+* MacOS | [How to merge multiple .CSV files using MacOS](https://eikhart.com/blog/merge-csv-files-with-mac-os-x-terminal)\  
+
+Once data are in three combined .CSV files, the files need to be merged and converted to .XLSX files. The two merged load data .CSV files (actual and forecasted load) are converted into a single .CSV and then saved as an .XLSX, `nys_electric_load.xlsx`. The merged weather data is saved as an .XLSX, `nys_weather_data.xlsx`.\  
+* Each of the conversions from .CSV to .XLSX is done using Microsoft Excel\  
+* _Please Note_: The column header names are changed to be more "code friendly"\  
+    + See what the column headers are in the next _Describe Data_ section, and change the headers in the raw .XLSX sheets to match\  
+
+```{r}
+# Upload raw electric load and forecast data from .xlsx file
+load.init <- read_excel("nys_electric_load.xlsx")
+
+# Upload raw weather forecast data from .xlsx file
+wthr.init <- read_excel("nys_weather_data.xlsx")
+```
+
+#### Describe Data
+
+After the raw data frames are loaded, the structure of each data frame is inspected to gain an understanding of the various types of variables amongst the raw data.  
+
+```{r}
+# Structure of raw load data frame
+str(load.init)
+```
+
+__Initial Load Data__ | `load.init` data frame described, with comments about significant observations\  
+* `date_hour`, POSIXct | Time stamp of each observation in yyyy-mm-dd hh:mm:ss format\  
+* `gmt_hour`, num | Greenwich Mean Time (GMT) of each observation\  
+    + This data attribute is redundant, as it is not necessary to encode the hourly time stamp in two attributes\  
+* `day`, chr | Day of week that the observation is made\  
+    + This chr variable will need to be formatted to a factor variable\  
+* `zone`, chr | NYISO zone in which the observation is made, by name\  
+    + This chr variable will need to be formatted to a factor variable\  
+* `zone_id`, num | NYSIO zone in which the observation is made, by ID\  
+    + This data attribute is redundant, as it is encoding the same information as `zone`\  
+* `load_actual`, num | Actual hourly electric load value observed\  
+* `load_forecast`, num | Forecasted hourly electric load value made\  
+* `rmse`, num | Root Mean Squared Error (RMSE) measure of the observation\  
+    + The RMSE value was calculated from rows existing in the raw data\  
+* `mape`, num | Mean Absolute Percentage Error (MAPE) measure of the observation\  
+    + The MAPE value was calculated from rows existing in the raw data\  
+
+The formulas for MAPE and RMSE are well-known, but can be explicitly found in Yang et al. (2018).  
+
+```{r}
+# Structure of raw weather data frame
+str(wthr.init)
+```
+
+__Initial Weather Data__ | `wthr.init` data frame described, with comments about significant observations\  
+* `forecast_date`, POSIXct | Date in which a forecast was made for the observation\  
+    + This variable is not important to this analysis\  
+    + This project is more focused on the true date of the observation\  
+* `date`, POSIXct | Date of the weather information for the observation\  
+* `station_id`, chr | Weather station at which the observation was made\  
+    + Each NYISO zone contains potentially many weather stations\  
+    + The weather station was used to determine which NYISO zone the observation pertains to\  
+* `max_temp`, num | Maximum temperature value (in degrees farenheight) achieved in the observation date\  
+* `min_temp`, num | Minimum temperature value (in degrees farenheight) achieved in the observation date\  
+* `temp_diff`, num | Numerical value of the difference in maximum and minimum temperatures achieved in the observation date\  
+    + This value was calculated based on the formula `max_temp - min_temp`\  
+* `max_wet_bulb`, num | Maximum humidity level achived in the observation date\  
+* `min_wet_bulb`, num | Minimum humidity level achived in the observation date\  
+* `diff_wet_bulb`, num | Difference in humidity levels achived in the observation date\  
+    + This value was calculated based on the formula `max_wet_bulb - min_wet_bulb`\  
+* `zone`, chr | NYISO zone in which the observation is made, by name\  
+    + This chr variable will need to be formatted to a factor variable\  
+
+#### Verify Data Quality
+
+Data quality can be measured in various ways. However, this project report looks at data quality in terms of data accuracy, completeness (missing data), consistency (outliers), and uniqueness (duplicate data). The following sub sections evaluate data quality in this fashion.  
+* _Note_: in terms of data accuracy, it is assumed that the data utilized is highly accurate  
+    + The NYISO groups provide the most accurate data available with respect to electric load  
+    + The airports across the state of NY provide the most accurate weather data available  
+
+##### Explore Missing Data
+
+After initial inspection of the load data that was downloaded for the intended time frame, there were no hourly observations that were missing.  
+
+After initial inspection of the weather data that was downloaded for the intended time frame, there was one date with no recorded observations. The date of 09/10/2017 was found to have missing data values.  
+* In order to move past this, the weather values from the next date of 09/11/2017 are copied into the date of 09/10/2017.   
+* This step is done to ensure that each date in the time frame had values that were present.  
+    + Statistical models described below rely on a complete time series in order to function the best they can  
+
+##### Explore Duplicate Data
+
+After inspection of the initial load and weather data frames, there were no duplicated data values.  
+* This was determined because there was a single observation for each unit of time intended to be used by the analyses  
+
+##### Explore for Outlier Data
+
+Outliers are not considered in this report, as all load value is important to NYISO in analyses. Every load needs to be taken care of, even the high and low points.    
+
+###### Note on Determinations Made from Data Quality Exploration
+
+The explorations noted directly above were an attempt to address data quality concerns. However, not all of these explorations were intended to correct mistakes made in the data. The exploration of outlier data was not intended to correct a mistake made in raw data frames downloaded. However, the missing data points that were found are considered to be a mistake, as theoretically all data points should be available. Also, if duplicate data points were found, that would also be a mistake, but on the fault of the analyst for not preprocessing the data correctly.  
+
+*** 
+
+# Data Preparation
+
+In this step of the project report, steps will be taken to prepare the raw data frame to be better suited for analysis. Not all attributes in the initial data frame are necessary to analyze. There were some deficiencies in the way the data was loaded (as described in the _Data Understanding_ section) that need to be fixed. A final set of data frames will also need to be made in order to align the data to the programming performed.\  
+* There will be multiple data frames created:\  
+    + To transform various parts of each raw data frame\  
+    + To create various data frames for different analytic approaches\  
+
+#### Select Data
+
+The variables that are not important to analysis were outlined in the Data Understanding section. They will not be pulled out of the data frame here, rather handled in the Construct Data section through the use of dplyr chains. This section of the report will not clean out the unnecessary data attributes from the raw `load.init` and `wthr.init` data frames.  
+
+#### Clean Data
+
+This section of the project report will ensure the data frames are cleaned and optimized. The initial part of the cleaning phase is to ensure there is no white space or differences in letter casing amongst the data values of the data frame being used to run analyses.\  
+* Initial names based on time interval nature of raw data.\  
+
+```{r, message = FALSE, warning = FALSE}
+# Load data - Hourly data frame creation
+load.hour <- load.init %>% mutate_if(is_character, ~str_to_upper(.) %>% str_trim())
+
+# Weahter data - Daily data frame creation
+wthr.day <- wthr.init %>% mutate_if(is_character, ~str_to_upper(.) %>% str_trim())
+```
+
+Identified deficiencies in the variable types are now handled.
+
+```{r}
+# Load data frame manipulation
+load.hour$gmt_hour <- as.factor(load.hour$gmt_hour)
+load.hour$day <- as.factor(load.hour$day)
+load.hour$zone <- as.factor(load.hour$zone)
+load.hour$zone_id <- as.factor(load.hour$zone_id)
+
+# Weather data frame manipulation
+wthr.day$station_id <- as.factor(wthr.day$station_id)
+wthr.day$zone <- as.factor(wthr.day$zone)
+```
+
+#### Construct Data
+
+This section of the project report will construct and manipulate various data frames that will be used in analyses to follow.
+
+There are multiple weather stations per NYISO zone in the weather data. Each weather station is located inside of an NYISO zone. The weather station data values are aggregated based on the NYISO zone.
+
+```{r}
+# Aggreage weather data by NYISO zone
+wthr.day <- wthr.day %>%
+  mutate(date = (date(date))) %>%
+  group_by(date, zone) %>%
+  summarize(max_temp = mean(max_temp), min_temp = mean(min_temp),
+            temp_diff = mean(temp_diff), max_wet_bulb = mean(max_wet_bulb),
+            min_wet_bulb = mean(min_wet_bulb), diff_wet_bulb = mean(diff_wet_bulb))
+```
+
+Since the `load.hour` and `wthr.day` are divided up by different time units (hours vs days), hourly electric load data must be aggregated into daily electric load data.  
+
+```{r}
+# Load data - Daily data frame creation
+load.day <- load.hour %>%
+  mutate(date = (date(date_hour))) %>%
+  group_by(date, zone) %>%
+  summarize(day = as.factor(modeUDF(day)), load_actual = sum(load_actual), load_forecast = sum(load_forecast))
+```
+
+After creating `load.day`, it can be observed that `wthr.day` has more days contained in it than `load.day` does. In order to align these data frames, the time frames must be equal.\  
+* Remove some of the values in the `wthr.day` data frame\  
+
+```{r}
+# Weather data - Slice daily frame to match time frame of daily load
+wthr.dayslice <- wthr.day[12:15576,] # 1/1/15 - 11/15/18
+```
+
+It would also be helpful to have an aggregated daily count of the load and weather values, across all zones.\  
+* This would represent NY-state wide data\  
+
+```{r}
+# Load data - Aggregate daily frame creation for NYS
+load.dayagg <- load.day %>%
+  group_by(date) %>%
+  summarize(day = as.factor(modeUDF(day)), load_actual = sum(load_actual), load_forecast = sum(load_forecast))
+
+# Weather data - Aggregate daily frame creation for NYS
+wthr.dayagg <- wthr.day %>%
+  group_by(date) %>%
+  summarize(max_temp = mean(max_temp), min_temp = mean(min_temp),
+            max_wet_bulb = mean(max_wet_bulb), min_wet_bulb = mean(min_wet_bulb)) %>%
+  slice(2:1416) # 1/1/15 - 11/15/18
+```
+
+#### Integrate Data
+
+Now that both the aggregated and daily zonal weather and load data frames are within the same time frame, merge them to make analysis purposes simpler.\  
+* There will be a new data frame created for the daily zonal data\  
+* There will be a new data frame created for the aggregated data\  
+
+```{r}
+# Merge both data frames
+df.day <- merge(x = load.day, y = wthr.dayslice, by = c("date", "zone"), all = TRUE)
+df.dayagg <- merge(x = load.dayagg, y = wthr.dayagg, by = c("date"), all = TRUE)
+```
+
+#### Format Data
+
+It can be observed in `df.day` and `df.dayagg` that the `date` attributes are in _Date_ format. In order to better pursue time series analyses, these data frames are copied into another data frame so the `date` attributes can be changed to _POSIXct_ format.  
+
+```{r}
+# Create data frames more suiteable for time series
+ts.day <- df.day
+ts.day$date <- as.POSIXct(ts.day$date)
+ts.dayagg <- df.dayagg
+ts.dayagg$date <- as.POSIXct(ts.dayagg$date)
+
+# need to make new slice data frames to use with linear models utilizing diffs
+df.dayagg.slice <- df.dayagg %>% slice(1:1415) # 1/1/15 - 11/15/18
+ts.dayagg.slice <- ts.dayagg %>% slice(2:1416) # 1/1/15 - 11/14/18
+```
+
+#### Explore Data
+
+After data has been cleaned, merged, and formatted, it can now be explored. Basic statistical figures were generated to gain a sense of what the data frames look like. Gaining exploratory knowledge around a data frame aids in data understanding efforts, as well as makes the analyst better equipped to perform model generation.  
+
+In order to run some statistical tests, it would be helpful to remove all data variables that are non-numeric.  
+
+```{r}
+# Remove all data attributes that are non-numeric from ts.dayagg
+num.dayagg <- ts.dayagg %>% select(-c(date, day, load_forecast))
+```
+
+The next set of code will provide low level statistics around the `num.dayagg` data frame.
+
+```{r}
+describe(num.dayagg) %>% kable(digits = 2, booktabs = T) %>%
+  kable_styling(latex_options = c("striped"))
+```
+
+The next set of code analyzes the correlation matrix of the numerical variables
+
+```{r}
+cor.dayagg <- cor(num.dayagg)
+corrplot.mixed(cor.dayagg)
+```
+
+##### General relationship exploration
+
+Visualization of the most important variables.  
+
+```{r}
+ggplot(data = (ts.dayagg),
+       aes(x = date, y = load_actual, color = day)) +
+  geom_jitter(width = 0.15) +
+  guides(fill = TRUE) +
+  stat_smooth(aes(group = 1), method = 'lm', formula = y ~ poly(x, 2, raw=TRUE)) +
+    ggtitle(label = "Aggregated Daily NYISO Load Amounts Over Time",
+          subtitle = "Color Encodes Various Days") +
+       xlab("Date") + ylab("Actual Load (in MegaWatts)")
+```
+
+From this graph, it can be observed that the load values experienced in summer and winter months are typically higher than those values experienced in spring and fall months.  
+
+```{r}
+ggplot(data = (ts.dayagg),
+       aes(x = date, y = max_temp)) +
+  geom_jitter(width = 0.15) +
+  stat_smooth(aes(group = 1), method = 'lm', formula = y ~ poly(x, 2, raw=TRUE)) +
+    ggtitle(label = "Daily Max Temperature Values Over Time",
+            subtitle = "Max Temperature Values are represented by Means") +
+       xlab("Date") + ylab("Max Temperature")
+```
+
+```{r}
+ggplot(data = (ts.dayagg),
+       aes(x = date, y = min_temp)) +
+  geom_jitter(width = 0.15) +
+  stat_smooth(aes(group = 1), method = 'lm', formula = y ~ poly(x, 2, raw=TRUE)) +
+    ggtitle(label = "Daily Min Temperature Values Over Time",
+            subtitle = "Min Temperature Values are represented by Means") +
+       xlab("Date") + ylab("Min Temperature")
+```
+
+It can be observed from the above two graphs that the maximum and minimum values for `max_temp` and `min_temp` are following a consistent pattern over time.  
+
+```{r}
+ggplot(data = ts.day,
+       aes(x = max_temp, y = load_actual, color = zone)) +
+  geom_jitter(width = 0.15) +
+  guides(fill = TRUE) +
+  stat_smooth(aes(group = 1), method = 'lm', formula = y ~ poly(x, 2, raw=TRUE)) +
+  ggtitle(label = "Relationship Between Max Temp and Actual Load",
+          subtitle = "Color Encodes Various Zones") +
+  xlab("Maximum Temperature (in Degrees Farenheight)") + ylab("Actual Load (in MegaWatts)")
+```
+
+From this graph, it can be observed that the N.Y.C. zone uses the most amount of electricity across the NYISO zones. Also, if the temperature goes above around 70, the load seems to increase more rapidly than below 70 degrees. 
+
+```{r}
+ggplot(data = ts.dayagg,
+       aes(x = max_temp, y = load_actual)) +
+  geom_jitter(width = 0.15) +
+  guides(fill = TRUE) +
+  stat_smooth(aes(group = 1), method = 'lm', formula = y ~ poly(x, 2, raw=TRUE)) +
+  ggtitle(label = "Relationship Between Max Temp and Actual Load",
+          subtitle = "Color Encodes Various Zones") +
+  xlab("Maximum Temperature (in Degrees Farenheight)") + ylab("Actual Load (in MegaWatts)")
+```
+
+```{r}
+ggplot((df.dayagg), aes(x = day, y = load_actual)) +
+  geom_boxplot() + 
+  geom_dotplot(binaxis='y', stackdir='center', 
+               dotsize = .40, fill="green") +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) +
+  ggtitle(label = "Relationship Between Day of Week and Actual Load") +
+  xlab("Day of Week") + ylab("Actual Load (in MegaWatts)")
+```
+
+From the graph above, it can be observed that Saturday and Sunday experience lower than average load values. The week days seem to have similar load values to each other, and are higher in relation to the weekends.  
+
+```{r}
+ggplot((df.dayagg), aes(x = day, y = max_temp)) +
+  geom_boxplot() + 
+  geom_dotplot(binaxis='y', stackdir='center', 
+               dotsize = .5, fill="red") +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6)) +
+  ggtitle(label = "Relationship Between Day of Week and Max Temp") +
+  xlab("Day of Week") + ylab("Max Temp")
+```
+
+***
+
+# Modeling and Modeling Evaluation
+
+In this report, a linear regression model will be built, as well as an ARIMA model. Each of these models will be utilized to differently predict future electric load values.  
+
+#### Linear Regression Model
+
+Build a linear regression model based on standardized inputs
+
+```{r}
+# Build a time series linear regression model
+tslm1 <- lm(formula = load_actual ~ date + day + max_temp +
+            min_temp + max_wet_bulb + min_wet_bulb,
+            data = ts.dayagg)
+
+# Present a nice looking table of tslm1 results
+tidy(tslm1) %>% kable(digits = 2, booktabs = T) %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+```
+
+The beta values and p-values can be seen in the kable table above. Since date is not a reasonable value to regress upon, the linear model needs to be altered slightly in order to differently account for seasonality.  
+
+In order to account for seasonality, this report will take a naive approach at encoding seasonality through an average load variable.  
+
+```{r}
+# Create a Day of Year column
+df.dayagg.doy <- df.dayagg %>% mutate(doy = yday(date)) 
+
+# Create a dataframe with average load values by day of year
+df.doyagg = df.dayagg.doy %>% group_by(doy) %>% summarise(avg_load = mean(load_actual))
+
+# Join the averaged day of year value to each data observation
+df.dayagg.new = left_join(df.dayagg.doy, df.doyagg, by="doy")
+```
+
+Now that there is a data frame with some seasonality encoded, try to run a different linear regression model.  
+
+```{r}
+# Build a time series linear regression model
+tslm2 <- lm(formula = load_actual ~ day + doy + max_temp +
+            min_temp + max_wet_bulb + min_wet_bulb + avg_load,
+            data = df.dayagg.new)
+
+# Present a nice looking table of tslm2 results
+tidy(tslm2) %>% kable(digits = 2, booktabs = T) %>%
+  kable_styling(latex_options = c("striped", "hold_position"))
+```
+
+Based on the model above, the p-values observed are high for the max_temp, min_temp, max_wet_bulb, and min_wet_bulb variables. Since normal business understanding informs that these variables are important, they are left in the linear regression model even though they break a threshold of 95% confidence.\  
+* _Note_: If there was more time to analyze report findings, the linear models would be altered until more appropriate p-values are returned\  
+
+```{r}
+ggplot(tslm2$model, aes_string(x = names(tslm2$model)[4], y = names(tslm2$model)[1])) + 
+  geom_point() +
+  stat_smooth(aes(group = 1), method = 'lm', formula = y ~ poly(x, 2, raw=TRUE)) +
+  ggtitle(label = "Relationship Between Max Temp and Actual Load with TSLM2",
+          subtitle = paste("Adj R2 = ",signif(summary(tslm2)$adj.r.squared, 5),
+                     "Intercept =",signif(tslm2$coef[[1]],5 ),
+                     " Slope =",signif(tslm2$coef[[2]], 5),
+                     " P =",signif(summary(tslm2)$coef[2,4], 5))) +
+  xlab("Maximum Temperature (in Degrees Farenheight)") + ylab("Actual Load (in MegaWatts)")
+```
+
+Based on the plot above, it can be seen that `tslm2` similiary resembles the relationship of actual load and maximum temperature.  
+
+```{r}
+checkresiduals(tslm2)
+```
+
+Based on the residuals check on `tslm2`, they are normally distributed and under control. There is no observable pattern to be seen in the residual plot.\  
+* _Note_: If there was more time to analyze the data, the explosion trends that can be seen around the summer months would be exploited more.\  
+
+#### ARIMA Model
+
+##### ARIMA Model - CAPITL
+
+As a code development aid, this project looks at only a small set of that data (i.e. single zone of NYISO service area) to refine the modeling process.\   
+*_Note_: The report then go back to refine and look at the whole dataset, 'CAPITL' is targetted for now.\  
+
+```{r}
+# Filter out daily load data for 'CAPITL' zone
+capitl.daily <- load.day %>% filter(zone == 'CAPITL')
+
+# Convert capitl.daily to time series object
+capitl.ts <- ts(capitl.daily$load_actual, 
+              start = c(2015, 1), 
+              frequency = 365.25)
+```
+
+The next step is to examine a few years for seasonality across a few years.  
+
+```{r}
+par(mfrow=c(1,3))
+# Check for seasonality, plotting data for single 2016 year
+capitl.ts %>% window(end = 2016) %>%
+  autoplot() + ylab("Actual Load (in MegaWatts)") + xlab("Year") +
+  ggtitle("Load variations in 2016")
+# Check for seasonality, plotting data for single 2017 year
+capitl.ts %>% window(end = 2017) %>%
+  autoplot() + ylab("Actual Load (in MegaWatts)") + xlab("Year") +
+  ggtitle("Load variations in 2017")
+# Check for seasonality, plotting data for single 2018 year
+capitl.ts %>% window(end = 2018) %>%
+  autoplot() + ylab("Actual Load (in MegaWatts)") + xlab("Year") +
+  ggtitle("Load variations in 2018")
+```
+
+The data are clearly non-stationary, with some seasonality. The project must first take a seasonal difference of the load data. The seasonally differenced data are shown in the figure below.   
+
+```{r}
+# Displaying the plots resulting from taking seasonal difference
+capitl.ts %>% diff(lag=365) %>% ggtsdisplay()
+```
+
+These plots also appear to be non-stationary, so the report will take an additional difference (second difference), shown in the figure below. This indicates the data to be stationary at this point.\  
+* Can use the diff = 2 in ARIMA model\  
+
+```{r}
+# Adding a second difference
+capitl.ts %>% diff(lag=365)%>% diff() %>% ggtsdisplay()
+```
+
+Now fit in different arima model and evaluate for AIC value and ACF plot.\  
+* Low AIC value and ACF plot that takes care of time lags are preferred.\  
+
+```{r}
+# This fit gives good ACF plot
+## Second lowest aic value and good p value
+fit0 <- arima(capitl.ts, order = c(1,1,1), seasonal = list(order = c(0, 1, 1), period = 7))
+fit0
+# Ljung-Box test + plot of fit0
+checkresiduals(fit0)
+## aic = 24901.15 p-value = 0.003436
+
+# This fit gives good ACF plot
+## Third lowest aic value and good p value 
+fit1 <- arima(capitl.ts, order = c(0,1,1), seasonal = list(order = c(0, 1, 1), period = 7))
+fit1
+# Ljung-Box test + plot of fit1
+checkresiduals(fit1)
+## aic = 24914.62 p-value = 0.002342
+
+# This fit gives bad ACF plot
+fit2 <- arima(capitl.ts, order = c(0,0,1), seasonal = list(order = c(0, 1, 1), period = 7))
+fit2
+# Ljung-Box test + plot of fit2
+checkresiduals(fit2)
+## aic = 25583.23 p-value < 2.2e-16
+
+# This fit gives good ACF plot
+## Lowest aic value. however, p-value is little high - move to next lowest value of aic
+fit3 <- arima(capitl.ts, order = c(1,1,1), seasonal = list(order = c(1, 1, 1), period = 7))
+fit3
+# Ljung-Box test + plot of fit3
+checkresiduals(fit3)
+## aic = 24892.23 p-value = 0.05198
+
+# Evaluating the aic values of each fitted model to decide which one to pursue
+aics <- c('fit0' = fit0$aic, 'fit1' = fit1$aic,'fit2' = fit2$aic, 'fit3' =fit3$aic)
+aics
+```
+
+The AIC values are printed in the table above.
+
+Analysis shows `fit3` gives lowest aic value for `capital.ts`.\  
+* However, the p-value is little high - so the analysis moves to next lowest value of aic.\  
+`fit0` gives good ACF plot.\  
+* Second lowest aic value and good p-value as well.\  
+Therefore, `fit0` is choosen this model to use for forecasting of `capital.ts`.\  
+
+### ARIMA Model - N.Y.C.
+
+Now the project report is building an ARIMA model for the NYISO zone with highest daily electricity consumption, which is 'NYC'.\  
+
+```{r}
+# Filter out daily load data for 'N.Y.C.' zone
+nyc.daily <- load.day %>% filter(zone == 'N.Y.C.')
+
+# Convert nyc.daily to time series object
+nyc.ts <- ts(nyc.daily$load_actual, 
+              start = c(2015, 1), 
+              frequency = 365.25)
+```
+
+The next step is to examine a few years for seasonality across a few years.  
+
+```{r}
+par(mfrow=c(1,3))
+# Check for seasonality, plotting data for single 2016 year
+nyc.ts %>% window(end = 2016) %>%
+  autoplot() + ylab("Actual Load (in MegaWatts)") + xlab("Year") +
+  ggtitle("Load variations in 2016")
+# Check for seasonality, plotting data for single 2017 year
+nyc.ts %>% window(end = 2017) %>%
+  autoplot() + ylab("Actual Load (in MegaWatts)") + xlab("Year") +
+  ggtitle("Load variations in 2017")
+# Check for seasonality, plotting data for single 2018 year
+nyc.ts %>% window(end = 2018) %>%
+  autoplot() + ylab("Actual Load (in MegaWatts)") + xlab("Year") +
+  ggtitle("Load variations in 2018")
+```
+
+The data are clearly non-stationary, with some seasonality. The project must first take a seasonal difference of the load data. The seasonally differenced data are shown in the figure below.   
+
+```{r}
+# Displaying the plots resulting from taking seasonal difference
+nyc.ts  %>% diff(lag=365) %>% ggtsdisplay()
+```
+
+These plots also appear to be non-stationary, so the report will take an additional difference (second difference), shown in the figure below. This indicates the data to be stationary at this point.\  
+* Can use the diff = 2 in ARIMA model\  
+
+```{r}
+# Adding a second difference
+nyc.ts %>% diff(lag=365)%>% diff() %>% ggtsdisplay()
+```
+
+Now fit in different arima model and evaluate for AIC value and ACF plot.\  
+* Low AIC value and ACF plot that takes care of time lags are preferred.\  
+
+```{r}
+fit0 <- arima(nyc.ts, order = c(1,1,1), seasonal = list(order = c(0, 1, 1), period = 7))
+fit0
+checkresiduals(fit0)
+## aic = 29491.74 p-value = 0.004033
+
+fit1 <- arima(nyc.ts, order = c(0,1,1), seasonal = list(order = c(0, 1, 1), period = 7))
+fit1
+checkresiduals(fit1)
+## aic = 29499.71 p-value = 0.004097
+
+fit2 <- arima(nyc.ts, order = c(0,0,1), seasonal = list(order = c(0, 1, 1), period = 7))
+fit2
+checkresiduals(fit2)
+## aic = 30184.5 p-value <  2.2e-16
+
+fit3 <- arima(nyc.ts, order = c(1,1,1), seasonal = list(order = c(1, 1, 1), period = 7))
+fit3
+checkresiduals(fit3)
+## aic = 29492.38 p-value = 0.01221
+
+# Evaluating the aic values of each fitted model to decide which one to pursue
+aics <- c('fit0' = fit0$aic, 'fit1' = fit1$aic,'fit2' = fit2$aic, 'fit3' =fit3$aic)
+aics
+```
+
+The AIC values are printed in the table above.
+
+Analysis shows `fit0` gives lowest aic values for `nyc.ts`.\  
+* `fit0` is chosen due to having lowest aic.\  
+    + This might help to conclude results about an perticular fitted model.  
+
+## ARIMA Model - NYS
+
+Now the report will build an ARIMA model including all eleven NYISO zones.  
+
+```{r}
+# Convert load.dayagg$load_actual to time series object
+nyiso.ts <- ts(load.dayagg$load_actual, 
+              start = c(2015, 1), 
+              frequency = 365.25)
+```
+
+The next step is to examine a few years for seasonality across a few years.  
+
+```{r}
+par(mfrow=c(1,3))
+# Check for seasonality, plotting data for single 2016 year
+nyiso.ts %>% window(end = 2016) %>%
+  autoplot() + ylab("Actual Load (in MegaWatts)") + xlab("Year") +
+  ggtitle("Load variations in 2016")
+# Check for seasonality, plotting data for single 2017 year
+nyiso.ts %>% window(end = 2017) %>%
+  autoplot() + ylab("Actual Load (in MegaWatts)") + xlab("Year") +
+  ggtitle("Load variations in 2017")
+# Check for seasonality, plotting data for single 2018 year
+nyiso.ts %>% window(end = 2018) %>%
+  autoplot() + ylab("Actual Load (in MegaWatts)") + xlab("Year") +
+  ggtitle("Load variations in 2018")
+```
+
+The data are clearly non-stationary, with some seasonality. The project must first take a seasonal difference of the load data. The seasonally differenced data are shown in the figure below.   
+
+```{r}
+# Displaying the plots resulting from taking seasonal difference
+nyiso.ts  %>% diff(lag=365) %>% ggtsdisplay()
+```
+
+These plots also appear to be non-stationary, so the report will take an additional difference (second difference), shown in the figure below. This indicates the data to be stationary at this point.\  
+* Can use the diff = 2 in ARIMA model\  
+
+```{r}
+# Adding a second difference
+nyiso.ts %>% diff(lag=365)%>% diff() %>% ggtsdisplay()
+```
+
+Now fit in different arima model and evaluate for AIC value and ACF plot.\  
+* Low AIC value and ACF plot that takes care of time lags are preferred.\  
+
+```{r}
+fit0 <- arima(nyiso.ts, order = c(1,1,1), seasonal = list(order = c(0, 1, 1), period = 7))
+fit0
+checkresiduals(fit0)
+# aic = 32050.7 p-value = 0.02722
+
+fit1 <- arima(nyiso.ts, order = c(0,1,1), seasonal = list(order = c(0, 1, 1), period = 7))
+fit1
+checkresiduals(fit1)
+# aic = 32058.5 p-value = 0.03592
+
+fit2 <- arima(nyiso.ts, order = c(0,0,1), seasonal = list(order = c(0, 1, 1), period = 7))
+fit2
+checkresiduals(fit2)
+# aic = 32824.62 p-value < 2.2e-16
+
+fit3 <- arima(nyiso.ts, order = c(1,1,1), seasonal = list(order = c(1, 1, 1), period = 7))
+fit3
+checkresiduals(fit3)
+# aic =  32050.21 p-value = 0.06666
+
+# Evaluating the aic values of each fitted model to decide which one to pursue
+aics <- c('fit0' = fit0$aic, 'fit1' = fit1$aic,'fit2' = fit2$aic, 'fit3' =fit3$aic)
+aics
+```
+
+The AIC values are printed in the table above.
+
+Analysis shows `fit0` and `fit3` give lowest aic values for `nyc.ts`.\  
+* `fit0` is chosen for consistency.\  
+    + This might help to conclude results about an perticular fitted model.\  
+
+# Deployment
+
+Deployment techniques are done in the form of forecasting. The linear regression and ARIMA models previously described will be used in forecasting scenarios. After the forecasts are made, the MAPE and RMSE are recalculated to evaluate the accuracy of the forecasted models.  
+
+#### Linear Regression Forecasting
+
+A test data frame is created for the purpose of running linear forecasting.
+
+```{r}
+# Create a data frame with the testing time frame
+df.dayagg.test <- df.dayagg.new %>% slice(1097:1415) # 12/31/17 - 11/15/18, 319 obs
+```
+
+The best linear regression model is run in the forecast.
+
+```{r}
+# Forecasting tslm2
+lm.forecast <- forecast(tslm2, newdata = df.dayagg.test, h = 1)
+lm.fit.err <- accuracy(df.dayagg.new$load_actual, lm.forecast$fitted[1097:1415])
+lm.fit.err
+
+#subsetting data points for 2018 from the full data set
+nyiso.2018 <- load.dayagg[c(1097:1415),]
+nyiso.err <- accuracy(nyiso.2018$load_actual,nyiso.2018$load_forecast)
+nyiso.err
+```
+
+The MAPE created with the linear forecasting for the testing timeframe is much higher than the normal MAPE (8.02 vs. 3.69). 
+* _Note_: If additional time allowed, this `tslm2` would be revisited and optimized, as to make a smaller forecasted MAPE value.  
+
+#### ARIMA Forecasting
+
+Each ARIMA fit will be forecasted.
+
+```{r}
+# Initialize a train data set (Jan 1st 2015 to Dec 31 2017) 
+train <- window(capitl.ts,end=2018)
+
+# Initialize a test data set (Jan 1st 2018 to Nov 15th 2018)
+test <- window(capitl.ts,start=2018)
+
+# Initialize a numeric value to be used in looping
+n <- 319
+```
+
+##### Forecasting with the CAPITL Fitted ARIMA Model
+
+```{r}
+# Initializing vector that will be used to store the forecasted values in loop
+fcmat <- rep(0,n)
+
+# Will be used inside the loop as a train data set
+loopdat <- train
+
+# loop for rolling forecast
+for(i in 1:n)
+{ 
+loopdat <-capitl.ts[1:(1096+i)] #Jan 1st 2015 to Dec 31 2017>we have 1096 points
+refit <- arima(loopdat, order = c(1,1,1), seasonal = list(order = c(0, 1, 1), period = 7))
+fcmat[i] <- forecast(refit, h=1)$mean
+}
+
+#to see the outputs... now set for 30 days
+newdat <- data.frame(actual = capitl.ts[1097:1415], forecasted = fcmat[1:n])
+
+#checking accuracy/ error measures of our model 
+capitl.fitted.err <- accuracy(newdat$actual, newdat$forecasted)
+capitl.fitted.err
+
+#subsetting data points for 2018 from the full data set
+capitl.2018 <- capitl.daily[c(1097:1415),]
+#checking accuracy of NYISO's current forecasted practice for capitl zone
+capitl.err <- accuracy(capitl.2018$load_actual,capitl.2018$load_forecast)
+capitl.err
+```
+
+The fitted MAPE (2.63) calculated from the forecasted values is much smaller than NYISO's current forecasted values' MAPE (4.47).\  
+* This is a good sign.\  
+
+##### Forecasting with the NYC Fitted ARIMA Model
+
+```{r}
+# Initializing vector that will be used to store the forecasted values in loop
+fcmat <- rep(0,n)
+
+# Will be used inside the loop as a train data set
+loopdat <- train
+
+for(i in 1:n)
+{ 
+loopdat <-nyc.ts[1:(1096+i)]
+refit <- arima(loopdat, order = c(1,1,1), seasonal = list(order = c(0, 1, 1), period = 7))
+fcmat[i] <- forecast(refit, h=1)$mean
+}
+
+#to see the outputs...
+newdat <- data.frame(actual = nyc.ts[1097:1415], forecasted = fcmat[1:319])
+
+#checking accuracy/ error measures of our model 
+nyc.fitted.err <- accuracy(newdat$actual, newdat$forecasted)
+nyc.fitted.err
+
+#subsetting data points for 2018 from the full data set
+nyc.2018 <- nyc.daily[c(1097:1415),]
+#checking accuracy of NYISO's current practice 
+nyc.err <- accuracy(nyc.2018$load_actual,nyc.2018$load_forecast)
+nyc.err
+```
+
+The fitted MAPE (3.93) calculated from the forecasted values is higher than NYISO's current forecasted values' MAPE (2.25).\  
+* It is interesting same fitted model is good for one zone and bad for other zone.\  
+
+##### Forecasting with the NYS Fitted ARIMA Model
+
+```{r}
+# Initializing vector that will be used to store the forecasted values in loop
+fcmat <- rep(0,n)
+
+# Will be used inside the loop as a train data set
+loopdat <- train
+
+for(i in 1:n)
+{ 
+loopdat <-nyiso.ts[1:(1096+i)]
+refit <- arima(loopdat, order = c(1,1,1), seasonal = list(order = c(0, 1, 1), period = 7))
+fcmat[i] <- forecast(refit, h=1)$mean
+}
+
+#to see the outputs...
+newdat <- data.frame(actual = nyiso.ts[1097:1415], forecasted = fcmat[1:319])
+
+#checking accuracy/ error measures of our model 
+nyiso.fitted.err <- accuracy(newdat$actual, newdat$forecasted)
+nyiso.fitted.err
+
+#checking accuracy of NYISO's current practice 
+nyiso.err
+```
+
+The fitted MAPE (3.24) calculated from the forecasted values is lower than NYISO's current forecasted values' MAPE (3.69).  
+
+***
+
+# Conclusion
+
+In total, this report was a good exercise at developing and testing forecasting models.
+
+From the analyses presented in this report, it can be concluded that the same fitted model is not good for all zones or any data set. This indicates the same conclusin as stated by T.Hong(2015):\  
+- There is not a perfect model\  
+- All forecasts can be improved\  
+- Accuracy is never guaranteed\  
+
+In the future, additional forecasting models will be applied to the dataset to understand if there are better modeling techniques to determining electric load forecasting. 
+
+***
+
+# References
+
+In this section of the report, full reference links are provided to accompany the in-line references with the explanations to sections of the project above. Various supporting links have also been restated, to ensure there is a dedicated reference section that is accurate.  
+
+* __Introduction References__\  
+    + [Learn more about NYISO](https://www.nyiso.com/what-we-do)\  
+    + [NYISO Zonal Map](http://nyarea.org/wp-content/uploads/NY-Electricity-Marketplace-IB.png)\  
+    + [CRISP-DM Framework](https://en.wikipedia.org/wiki/Cross-industry_standard_process_for_data_mining)\  
+    + [modeUDF Function](https://stackoverflow.com/questions/2547402/is-there-a-built-in-function-for-finding-the-mode)\  
+
+* __Business Understanding References__\  
+    + [Factors Affecting Electricity Prices](https://www.eia.gov/energyexplained/index.php?page=electricity_factors_affecting_prices)\  
+
+* __Data Understanding References__\  
+    + [NYISO Data Center](https://www.nyiso.com/load-data)\  
+    + [How to merge multiple .CSV files using Windows/Linux](http://www.tomnash.eu/how-to-combine-multiple-csv-files-into-one-using-cmd/)\  
+    + [How to merge multiple .CSV files using MacOS](https://eikhart.com/blog/merge-csv-files-with-mac-os-x-terminal)\    
+* __Modeling References__\  
+    + BOOK 'Forecating: Principles and Practice' by Rob J Hyndman and George Athanasopoulos https://otexts.org/fpp2/\  
+    + https://people.duke.edu/~rnau/seasarim.htm#model2\  
+    + 'A Little Book of R For Time Series' By Avril Coghlan\  
+
+The following references were made in line with text throughout the report.
+
+[1]	H. Hahn, S. Meyer-Nieberg, and S. Pickl, "Electric load forecasting methods: Tools for decision making," Eur. J. Oper. Res., 2009.\  
+[2]	E. A. Feinberg and D. Genethliou, "Load Forecasting," in Applied Mathematics for Restructured Electric Power Systems. Power Electronics and Power Systems., J. H. Chow, F. F. Wu, and J. Momoh, Eds. Boston, MA: Springer US, 2005, pp. 269-285.\  
+[3]	S. A. Soliman and A. M. Al-Kandari, "Mathematical Background and State of the Art," in Electrical load forecasting: modeling and model construction, Elsevier, 2010, pp. 1-44.\  
+[4]	T. Hong, "Crystal Ball Lessons in Predictive Analytics," Energybiz, 2015.\  
+[5] Y. Yang, S. Li, W. Li, and M. Qu, “Power load probability density forecasting using Gaussian process quantile regression,” Appl. Energy, vol. 213, no. August 2017, pp. 499–509, 2018.\  
+[6] T. Hong, "Short term electric load forecasting," North Carolina State University, 2010.\  
+[7] Electric Load Forecasting: Fundamentals and Best Practices by Tao Hong, David A. Dickey. Publisher: OTexts 2015. Number of pages: 306\  
